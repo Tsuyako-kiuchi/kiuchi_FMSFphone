@@ -1,8 +1,9 @@
 
 # make_index.py
-# data.xlsx から PINなし・検索/クリア・初期折り畳み・URL表示・カード/テーブル切替付きの index.html を生成
+# data.xlsx から PINなし・検索/クリア・初期はカテゴリ展開・URL表示・カード/テーブル切替付きの index.html を生成
 
 import os
+import re
 import pandas as pd
 from html import escape
 
@@ -10,6 +11,7 @@ CATEGORY_ORDER = [
     "発注者", "コンサル", "設計監理", "別途業者", "施工図", "躯体工事",
     "仕上げ工事", "その他業者", "職員"
 ]
+
 COL_MAP = {
     'カテゴリ': 'カテゴリ', 'カテゴリー': 'カテゴリ', 'category': 'カテゴリ',
     '業種': 'カテゴリ', '業種ギョウシュ': 'カテゴリ',
@@ -22,10 +24,11 @@ COL_MAP = {
     '携帯': '携帯', 'mobile': '携帯', '携帯電話': '携帯', '携帯番号': '携帯',
     'メール': 'メール', 'mail': 'メール', 'email': 'メール', 'E-mail': 'メール', 'アドレス': 'メール'
 }
+
 EXPECTED_COLS = ['カテゴリ','氏名','会社名','役職','住所','電話','FAX','携帯','メール']
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    # 複数の候補列がある場合、行ごとに「最初に値が入っている列」を採用
+    """列名の表記ゆれを吸収して標準列に整形"""
     target_sources = {t: [] for t in EXPECTED_COLS}
     for c in df.columns:
         if c in COL_MAP:
@@ -66,7 +69,6 @@ def normalize_category(value) -> str:
     return s
 
 def tel_link(num: str) -> str:
-    import re
     num = (str(num) if not pd.isna(num) else '').strip()
     if not num: return ''
     cleaned = ''.join(re.findall(r"[0-9+]+", num))
@@ -98,14 +100,14 @@ def build_card_html(row: dict) -> str:
 
     contact_parts = []
     if tel.strip():
-        contact_parts.append(f'<span class="label">電話:</span> <a href="{escape(tel_href)}el)}</a>')
+        contact_parts.append(f'<span class="label">電話:</span> {escape(tel_href)}{escape(tel)}</a>')
     if fax.strip():
         contact_parts.append(f'<span class="label">FAX:</span> {escape(fax)}')
     if mobile.strip():
         contact_parts.append(f'<span class="label">携帯:</span> {escape(mobile_href)}{escape(mobile)}</a>')
     contact_html = ' / '.join(contact_parts) if contact_parts else ''
 
-    email_html = f'<span class="label">メール:</span> <a href(mail_href)}{escape(mail)}</a>' if mail.strip() else ''
+    email_html = f'<span class="label">メール:</span> {escape(mail_href)}{escape(mail)}</a>' if mail.strip() else ''
     company_role = ' / '.join([p for p in [company, role] if p])
 
     return f'''<div class="card entry" data-search="{escape(build_entry_search_text(row))}">
@@ -137,7 +139,7 @@ def build_table_row_html(row: dict) -> str:
     tel_cell = f'{escape(tel_href)}{escape(tel)}</a>' if tel.strip() else ''
     fax_cell = escape(fax) if fax.strip() else ''
     mobile_cell = f'{escape(mobile_href)}{escape(mobile)}</a>' if mobile.strip() else ''
-    mail_cell = f'<a href="{escape(mailscape(mail)}</a>' if mail.strip() else ''
+    mail_cell = f'{escape(mail_href)}{escape(mail)}</a>' if mail.strip() else ''
 
     return f'''<tr class="entry" data-search="{escape(build_entry_search_text(row))}">
   <td class="td-name">{name}</td>
@@ -208,7 +210,8 @@ def build_html(df: pd.DataFrame) -> str:
     header .title { font-size: 20px; font-weight: 600; margin: 0 0 6px 0; }
     header .page-url { font-size: 12px; color: var(--muted); word-break: break-all; margin-bottom: 8px; }
     .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    .controls input[type="search"] { flex: 1 1 280px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; }
+    .controls input[type="search"] { flex: 1 1 280px; padding: 8px 10px; border: 1px solid var(--border);
+      border-radius: 6px; font-size: 14px; }
     .btn { padding: 8px 10px; border: 1px solid var(--border); background: #fff; border-radius: 6px; font-size: 13px; cursor: pointer; }
     .btn.active { background: var(--primary); color:#fff; border-color:var(--primary); }
 
@@ -275,6 +278,7 @@ def build_html(df: pd.DataFrame) -> str:
       q = (q || '').toLowerCase();
       const entries = content.querySelectorAll('.entry');
       const catHasMatch = new Map();
+
       entries.forEach(function(el) {
         const text = (el.getAttribute('data-search') || '').toLowerCase();
         const match = !q || text.indexOf(q) !== -1;
@@ -282,13 +286,18 @@ def build_html(df: pd.DataFrame) -> str:
         const cat = el.closest('details.category');
         if (match && cat) catHasMatch.set(cat, true);
       });
+
       const cats = content.querySelectorAll('details.category');
       cats.forEach(function(d) {
         if (q) { d.open = !!catHasMatch.get(d); }
-        else   { d.open = false; } // 初期は折り畳み
+        else   { d.open = true; }  // ← 初期は展開（開く）
         d.querySelectorAll('.entries').forEach(function(wrapper) {
-          const visible = wrapper.querySelectorAll('.entry:not([style*="display: none"])').length;
-          wrapper.style.display = visible ? '' : 'none';
+          if (q) {
+            const visible = wrapper.querySelectorAll('.entry:not([style*="display: none"])').length;
+            wrapper.style.display = visible ? '' : 'none';
+          } else {
+            wrapper.style.display = '';  // ← 初期は常に表示
+          }
         });
       });
     }
@@ -305,7 +314,7 @@ def build_html(df: pd.DataFrame) -> str:
       btnTable.classList.add('active'); btnCard.classList.remove('active');
     });
 
-    // 初期化
+    // 初期化（検索なし → カテゴリは展開）
     filter('');
   </script>
 </body>
@@ -317,17 +326,20 @@ def main():
     with open('.nojekyll', 'w', encoding='utf-8') as f:
         f.write('')
 
-    # data.xlsx → index.html
-    df = pd.read_excel('data.xlsx', engine='openpyxl')
+    # 必要に応じて sheet_name を指定（最初のシートなら省略可）
+    df = pd.read_excel('data.xlsx', engine='openpyxl')  # 例: sheet_name='電話帳'
+
     df = normalize_columns(df)
     df = df.dropna(how='all').fillna('')
+
+    # まったく空の行を除外
     mask_valid = df[['氏名','会社名','メール','電話','携帯','住所']].astype(str)\
                   .apply(lambda r: any(v.strip() for v in r), axis=1)
     df = df[mask_valid]
 
     html = build_html(df)
     with open('index.html', 'w', encoding='utf-8') as f:
-               f.write(html)
+        f.write(html)
     print('index.html と .nojekyll を生成しました')
 
-if __name__ == '__main__':
+ifif __name__ == '__main__':
